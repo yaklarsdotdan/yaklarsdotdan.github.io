@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>טופס רישום קהילתי - מועצה אזורית</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getFirestore, collection, addDoc, getDocs, doc, deleteDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+
+        // *** החלף בנתונים האמיתיים של הפרויקט שלך מ-Firebase ***
+    const firebaseConfig = {
+            apiKey: "AIzaSyAiUkxhuZLnQKvcX56uLunrn2djgDDpVyU",
+            authDomain: "community-registration-92e95.firebaseapp.com",
+            projectId: "community-registration-92e95",
+            storageBucket: "community-registration-92e95.firebasestorage.app",
+            messagingSenderId: "834996088017",
+            appId: "1:834996088017:web:3fee02f5fef87426e769f0"
+        };
+
+        const app  = initializeApp(firebaseConfig);
+        const db   = getFirestore(app);
+        const auth = getAuth(app);
+        const APP_ID = 'community-form-production';
+
+        // ── Auth ──────────────────────────────────────────────────────────────
+        let resolveAuthReady;
+        const authReady = new Promise(resolve => { resolveAuthReady = resolve; });
+
+        let currentUser = null;
+
+        onAuthStateChanged(auth, (u) => {
+            currentUser = u;
+            if (u) resolveAuthReady(u);
+        });
+
+        const startSignIn = (delayMs = 0) => {
+            setTimeout(async () => {
+                if (currentUser) return;          
+                try {
+                    await signInAnonymously(auth); 
+                } catch (err) {
+                    console.warn('signInAnonymously failed, retrying...', err.code);
+                    startSignIn(Math.min((delayMs || 500) * 2, 8000));
+                }
+            }, delayMs);
+        };
+        startSignIn();
+
+        // ── Data ──────────────────────────────────────────────────────────────
+        const SETTLEMENTS = {
+            "כפר חב\"ד": ["מצוותיך","שערי אורה","ס\"ו","ע\"ב","רבי לוי יצחק","דבר מלכות","ליקוטי שיחות","לוח היום יום","איגרות קודש","לימוד החסידות","הבעש\"ט","ליקוטי דיבורים","תורת שמואל","שערי תשובה","ספר הזיכרונות","חנוך לנער","אדמו\"ר האמצעי","הגאולה","עטרת ראש","אדמו\"ר הרש\"ב","הרב נחום טרבניק","הרב שניאור זלמן גור","המגיד ממעזריטש","אדמו\"ר הזקן","אדמו\"ר הריי\"צ","אדמו\"ר מהר\"ש","אור התורה","אדמו\"ר הצמח צדק","הרב מרדכי שמואל אשכנזי","הרבי מליובאוויטש","צעירי חב\"ד","תורת מנחם","ספר התניא","ליקוטי תורה","באתי לגני","770","אמרי בינה","תורת חיים","חנה הרבנית","הרבנית חיה מושקא"],
+            "צפריה":      ["הזית","החיטה","התאנה","התמר","הרימון"],
+            "חמד":        ["התמר","הרימון","התאנה","נחל דן","נחל זרי הדפנה","החיטה","נחל גבעות","נחל דולב","העומר","הזית","נחל הירדן","נחל הבשור","נחל חרמון","הגפן","הנחלים","נחל שפירים","נחל ארבל","נחל תבור","נחל אילון","נחל צין"],
+            "זיתן":       ["האשל","התאנה","הזית","הפרדס","האתרוג","הערבה","התמר","ההדס","הגפן","הרימון"],
+            "אחיעזר":     ["הזית","הרימון","הגפן","התאנה","האתרוג","ימין","הדקל","האלון"],
+            "ניר צבי":    ["הצאלון","הדקל","הערבה","הרימון","אלה","הדר","האלון","הזית","הגפן","השיטה","לימון","חצץ","שקד"],
+            "משמר השבעה": ["יצחק קורדובה","ישראל 5","יעקב אלבז","אליהו נאור","דוד אובניצקי","מנחם אבטוחי","הדס","דולב","תמר","שקד","הנרקיס","הגפן","ההרדוף","הזית","הוורד","הלילך","האקליפטוס","השיטה"],
+            "יגל":        ["הגפן","חצץ","הלימון","הדקל","שקד"]
+        };
+
+        // ── Navigation ────────────────────────────────────────────────────────
+        window.showStep = (id) => {
+            document.querySelectorAll('.step').forEach(s => s.classList.add('hidden'));
+            document.getElementById(id).classList.remove('hidden');
+            window.scrollTo(0, 0);
+        };
+
+        // ── Step validations ──────────────────────────────────────────────────
+        window.validateStep1 = () => {
+            const first = document.getElementById('firstName').value.trim();
+            const last  = document.getElementById('lastName').value.trim();
+            if (!first || !last) { alert('אנא מלא שם פרטי ושם משפחה'); return; }
+            window.showStep('step2');
+        };
+
+        window.validateStep3 = () => {
+            const street = document.getElementById('streetSelect').value;
+            const house  = document.getElementById('houseNumber').value.trim();
+            if (!street) { alert('אנא בחר רחוב'); return; }
+            if (!house)  { alert('אנא הזן מספר בית'); return; }
+            window.showStep('step4');
+        };
+
+        // ── Guests toggle ─────────────────────────────────────────────────────
+        window.toggleGuestsField = (show) => {
+            const field = document.getElementById('guestsCountField');
+            if (show) {
+                field.classList.remove('hidden');
+            } else {
+                field.classList.add('hidden');
+                document.getElementById('guestsCount').value = '';
+            }
+        };
+
+        // ── Submit ────────────────────────────────────────────────────────────
+        window.submitForm = async () => {
+            const btn      = document.getElementById('submitBtn');
+            const origText = btn.textContent;
+
+            btn.disabled    = true;
+            btn.textContent = '⏳ שולח...';
+
+            // Wait for a signed-in user; fall back to null after 10 s
+            const user = await Promise.race([
+                authReady,
+                new Promise(resolve => setTimeout(() => resolve(null), 10000))
+            ]);
+
+            if (!user) {
+                btn.disabled    = false;
+                btn.textContent = origText;
+                alert('לא הצלחנו להתחבר לשרת.\nבדוק את חיבור האינטרנט ונסה שוב.');
+                return;
+            }
+
+            const hasGuests = document.querySelector('input[name="hasGuests"]:checked')?.value === 'yes';
+
+            const payload = {
+                firstName:     document.getElementById('firstName').value.trim(),
+                lastName:      document.getElementById('lastName').value.trim(),
+                settlement:    window.selectedSettlement,
+                street:        document.getElementById('streetSelect').value,
+                houseNumber:   document.getElementById('houseNumber').value.trim(),
+                floor:         document.getElementById('floor').value.trim(),
+                apartment:     document.getElementById('apartment').value.trim(),
+                householdSize: document.getElementById('householdSize').value || 0,
+                hasGuests,
+                guestsCount:   hasGuests ? (parseInt(document.getElementById('guestsCount').value) || 0) : 0,
+                hasPets:       document.querySelector('input[name="hasPets"]:checked')?.value === 'yes',
+                headPhone:     document.getElementById('headPhone').value.trim(),
+                extraDetails:  document.getElementById('extraDetails').value.trim(),
+                timestamp:     new Date().toISOString()
+            };
+
+            if (!payload.firstName || !payload.lastName || !payload.settlement || !payload.street || !payload.houseNumber) {
+                btn.disabled    = false;
+                btn.textContent = origText;
+                alert('אנא מלא את כל שדות החובה');
+                return;
+            }
+
+            if (!payload.headPhone || payload.headPhone.length < 8) {
+                btn.disabled    = false;
+                btn.textContent = origText;
+                alert('אנא הזן מספר טלפון תקין ליצירת קשר');
+                return;
+            }
+
+            try {
+                await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'registrations'), payload);
+                document.getElementById('summaryName').innerText = payload.firstName;
+                window.showStep('successMessage');
+            } catch (err) {
+                console.error('Firestore write failed:', err);
+                btn.disabled    = false;
+                btn.textContent = origText;
+                alert('שגיאה בשמירת הנתונים. אנא נסה שנית.');
+            }
+        };
+
+        // ── Admin Login ───────────────────────────────────────────────────────
+        window.adminLogin = () => {
+            const pass = prompt("הכנס סיסמת מנהל:");
+            
+            // שנה את המספר "1234" לסיסמה שאתה רוצה
+            if (pass === "1234") { 
+                window.loadAdminData();
+            } else if (pass !== null && pass !== "") {
+                alert("סיסמה שגויה!");
+            }
+        };
+
+        // ── Admin Panel Load ──────────────────────────────────────────────────
+        window.loadAdminData = async () => {
+            try {
+                const snap  = await getDocs(collection(db, 'artifacts', APP_ID, 'public', 'data', 'registrations'));
+                const tbody = document.getElementById('adminTableBody');
+                tbody.innerHTML     = '';
+                window.currentRecords = [];
+
+                snap.forEach(docSnap => {
+                    const d = docSnap.data(), id = docSnap.id;
+                    window.currentRecords.push({ id, ...d });
+                    tbody.innerHTML += `
+                        <tr class="border-b text-xs hover:bg-gray-50 text-right">
+                            <td class="p-2 border font-bold">${d.firstName} ${d.lastName}</td>
+                            <td class="p-2 border">${d.settlement}<br>
+                                <span class="text-gray-500">${d.street} ${d.houseNumber} ק.${d.floor||'-'} ד.${d.apartment||'-'}</span>
+                            </td>
+                            <td class="p-2 border text-center">
+                                נפשות: ${d.householdSize||0}<br>
+                                אורחים: ${d.hasGuests ? d.guestsCount : 'לא'}<br>
+                                חיה: ${d.hasPets ? 'כן' : 'לא'}
+                            </td>
+                            <td class="p-2 border">
+                                <input type="tel" value="${d.headPhone||''}"
+                                    onchange="window.updateField('${id}','headPhone',this.value)"
+                                    class="w-full border rounded text-center p-1">
+                            </td>
+                            <td class="p-2 border text-center">
+                                <button onclick="window.deleteRecord('${id}')" class="text-red-500 hover:text-red-700">🗑️</button>
+                            </td>
+                        </tr>`;
+                });
+                window.showStep('adminPanel');
+            } catch (err) {
+                console.error('Admin load error:', err);
+                alert('שגיאה בטעינת הנתונים');
+            }
+        };
+
+        window.updateField = async (id, field, value) => {
+            try {
+                await updateDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'registrations', id), { [field]: value });
+            } catch (err) {
+                console.error('Update error:', err);
+                alert('שגיאה בעדכון');
+            }
+        };
+
+        window.deleteRecord = async (id) => {
+            if (!confirm('האם למחוק רשומה זו?')) return;
+            try {
+                await deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'registrations', id));
+                window.loadAdminData();
+            } catch (err) {
+                console.error('Delete error:', err);
+                alert('שגיאה במחיקה');
+            }
+        };
+
+        // ── CSV export ────────────────────────────────────────────────────────
+        const csvCell = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+
+        window.exportToCSV = () => {
+            if (!window.currentRecords?.length) return;
+            let csv = '\uFEFFשם פרטי,שם משפחה,יישוב,רחוב,בית,קומה,דירה,נפשות,אורחים,כמה אורחים,בעלי חיים,טלפון,הערות\n';
+            window.currentRecords.forEach(r => {
+                csv += [
+                    csvCell(r.firstName), csvCell(r.lastName),   csvCell(r.settlement),
+                    csvCell(r.street),    csvCell(r.houseNumber), csvCell(r.floor),
+                    csvCell(r.apartment), csvCell(r.householdSize),
+                    csvCell(r.hasGuests ? 'כן' : 'לא'), csvCell(r.guestsCount||0),
+                    csvCell(r.hasPets ? 'כן' : 'לא'),   csvCell(r.headPhone),
+                    csvCell(r.extraDetails)
+                ].join(',') + '\n';
+            });
+            Object.assign(document.createElement('a'), {
+                href:     URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' })),
+                download: 'registrations.csv'
+            }).click();
+        };
+
+        // ── Settlement list ────────────────────────────────────────────────────
+        window.selectedSettlement = '';
+
+        const initSettlements = () => {
+            const container = document.getElementById('settlementList');
+            if (!container) return;
+            Object.keys(SETTLEMENTS).sort().forEach(name => {
+                const div = document.createElement('div');
+                div.className = 'p-3 border rounded-lg cursor-pointer hover:bg-blue-50 transition-all settlement-item text-sm text-right';
+                div.innerText = name;
+                div.onclick = () => {
+                    window.selectedSettlement = name;
+                    document.querySelectorAll('.settlement-item')
+                        .forEach(el => el.classList.remove('bg-blue-100','border-blue-600','font-bold'));
+                    div.classList.add('bg-blue-100','border-blue-600','font-bold');
+                    document.getElementById('toStep3Btn').disabled = false;
+                    const select = document.getElementById('streetSelect');
+                    select.innerHTML = '<option value="">בחר רחוב...</option>';
+                    [...SETTLEMENTS[name]].sort().forEach(street => {
+                        select.appendChild(Object.assign(document.createElement('option'), { value: street, innerText: street }));
+                    });
+                };
+                container.appendChild(div);
+            });
+        };
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initSettlements);
+        } else {
+            initSettlements();
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Assistant:wght@300;400;700&display=swap');
+        body { font-family: 'Assistant', sans-serif; background-color: #f3f4f6; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body class="p-2 md:p-8">
+<div class="max-w-md mx-auto bg-white rounded-2xl shadow-xl overflow-hidden min-h-[580px] flex flex-col">
+
+    <div class="bg-blue-600 p-5 text-white text-center select-none">
+        <h1 class="text-xl font-bold">טופס רישום קהילתי</h1>
+        <p class="text-xs opacity-80">מועצה אזורית - עדכון נתונים</p>
+    </div>
+
+    <div class="p-5 flex-grow">
+
+        <div id="step1" class="step">
+            <h2 class="text-lg font-bold mb-4 text-gray-800 border-b pb-2 text-right">שלב 1: פרטים אישיים</h2>
+            <div class="space-y-3 text-right">
+                <input type="text" id="lastName"  placeholder="שם משפחה *" class="w-full p-3 border rounded-lg text-right">
+                <input type="text" id="firstName" placeholder="שם פרטי *"  class="w-full p-3 border rounded-lg text-right">
+            </div>
+            <button onclick="validateStep1()" class="w-full mt-6 bg-blue-600 text-white py-3 rounded-xl font-bold">המשך</button>
+        </div>
+
+        <div id="step2" class="step hidden text-right">
+            <h2 class="text-lg font-bold mb-4">שלב 2: בחירת יישוב</h2>
+            <div id="settlementList" class="space-y-2 max-h-64 overflow-y-auto"></div>
+            <div class="flex gap-2 mt-6">
+                <button onclick="showStep('step1')" class="w-1/3 border py-3 rounded-xl font-bold text-gray-500">חזור</button>
+                <button id="toStep3Btn" disabled onclick="showStep('step3')"
+                    class="w-2/3 bg-blue-600 text-white py-3 rounded-xl font-bold disabled:opacity-50">המשך</button>
+            </div>
+        </div>
+
+        <div id="step3" class="step hidden text-right">
+            <h2 class="text-lg font-bold mb-4">שלב 3: כתובת מלאה</h2>
+            <div class="space-y-4">
+                <select id="streetSelect" class="w-full p-3 border rounded-lg bg-white text-right">
+                    <option value="">בחר רחוב...</option>
+                </select>
+                <div class="grid grid-cols-3 gap-2">
+                    <input type="text" id="houseNumber" placeholder="בית *"  class="p-3 border rounded-lg text-center">
+                    <input type="text" id="floor"       placeholder="קומה"   class="p-3 border rounded-lg text-center">
+                    <input type="text" id="apartment"   placeholder="דירה"   class="p-3 border rounded-lg text-center">
+                </div>
+            </div>
+            <div class="flex gap-2 mt-8">
+                <button onclick="showStep('step2')"  class="w-1/3 border py-3 rounded-xl">חזור</button>
+                <button onclick="validateStep3()" class="w-2/3 bg-blue-600 text-white py-3 rounded-xl font-bold">המשך</button>
+            </div>
+        </div>
+
+        <div id="step4" class="step hidden text-right">
+            <h2 class="text-lg font-bold mb-4">שלב 4: פרטים אחרונים</h2>
+            <div class="space-y-4">
+                <input type="number" id="householdSize" min="1"
+                    placeholder="מספר נפשות בבית" class="w-full p-3 border rounded-lg text-right">
+
+                <div class="p-3 bg-gray-50 rounded-lg">
+                    <label class="block text-sm font-bold mb-2">אורחים בבית?</label>
+                    <div class="flex gap-4">
+                        <label><input type="radio" name="hasGuests" value="yes" onclick="toggleGuestsField(true)"> כן</label>
+                        <label><input type="radio" name="hasGuests" value="no" checked onclick="toggleGuestsField(false)"> לא</label>
+                    </div>
+                </div>
+                <div id="guestsCountField" class="hidden">
+                    <input type="number" id="guestsCount" min="1"
+                        placeholder="מספר אורחים" class="w-full p-3 border rounded-lg text-right">
+                </div>
+
+                <div class="p-3 bg-blue-50 rounded-lg">
+                    <label class="block text-sm font-bold mb-2">בעלי חיים בבית?</label>
+                    <div class="flex gap-4">
+                        <label><input type="radio" name="hasPets" value="yes"> כן</label>
+                        <label><input type="radio" name="hasPets" value="no" checked> לא</label>
+                    </div>
+                </div>
+
+                <input type="tel" id="headPhone"
+                    placeholder="טלפון ראש המשפחה *" class="w-full p-3 border rounded-lg text-right">
+                <textarea id="extraDetails"
+                    placeholder="הערות נוספות" class="w-full p-3 border rounded-lg h-20 text-right"></textarea>
+            </div>
+
+            <div class="flex gap-2 mt-4">
+                <button onclick="showStep('step3')" class="w-1/3 border py-3 rounded-xl">חזור</button>
+                <button id="submitBtn" onclick="submitForm()"
+                    class="w-2/3 bg-green-600 text-white py-3 rounded-xl font-bold shadow-lg">שלח רישום</button>
+            </div>
+        </div>
+
+        <div id="successMessage" class="step hidden text-center py-10">
+            <div class="text-6xl text-green-500 mb-4 animate-bounce">✅</div>
+            <h2 class="text-xl font-bold">הרישום נשלח!</h2>
+            <p class="text-gray-600 mt-2 text-sm">תודה, <span id="summaryName" class="font-bold"></span>.</p>
+            <button onclick="location.reload()"
+                class="mt-8 bg-blue-100 text-blue-700 px-6 py-2 rounded-full text-sm font-bold">מילוי טופס חדש</button>
+        </div>
+
+        <div id="adminPanel" class="step hidden">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="font-bold text-sm">ניהול נרשמים</h2>
+                <button onclick="window.exportToCSV()" class="bg-green-600 text-white px-2 py-1 rounded text-[10px]">ייצוא 📥</button>
+            </div>
+            <div class="overflow-x-auto max-h-[400px] border rounded-lg bg-white">
+                <table class="w-full text-right border-collapse">
+                    <thead class="sticky top-0 bg-gray-100">
+                        <tr class="text-[10px]">
+                            <th class="p-2 border">שם</th>
+                            <th class="p-2 border">כתובת</th>
+                            <th class="p-2 border text-center">פרטים</th>
+                            <th class="p-2 border">טלפון</th>
+                            <th class="p-2 border"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="adminTableBody"></tbody>
+                </table>
+            </div>
+            <button onclick="showStep('step1')"
+                class="w-full mt-4 bg-gray-500 text-white py-2 rounded-lg text-sm">סגור</button>
+        </div>
+
+    </div>
+
+    <div class="bg-gray-50 p-3 flex justify-between items-center text-[10px] text-gray-400 px-6 rounded-b-2xl">
+        <span>©️ מערכת רישום קהילתית</span>
+        <button onclick="adminLogin()" class="hover:text-blue-500 transition-colors">כניסת מנהל 🔒</button>
+    </div>
+</div>
+</body>
+</html>
